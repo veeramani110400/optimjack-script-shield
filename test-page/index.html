@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Script Shield test bench</title>
+<style>
+  :root{--ink:#1d2433;--muted:#5a6478;--line:#d5dae3;--bg:#eef1f5;--panel:#ffffff;--warn:#c0392b;--go:#2457a6}
+  @media (prefers-color-scheme: dark){:root{--ink:#e4e8ef;--muted:#9aa3b5;--line:#36405a;--bg:#151a26;--panel:#1e2535;--go:#6f9be0}}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 "Segoe UI",system-ui,sans-serif}
+  main{max-width:720px;margin:0 auto;padding:32px 20px 64px}
+  h1{font-size:28px;margin:0 0 6px}
+  p.lead{color:var(--muted);margin:0 0 28px}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:20px;margin-bottom:18px}
+  h2{font-size:18px;margin:0 0 6px}
+  section p{margin:0 0 12px;color:var(--muted)}
+  button{font:inherit;border:0;border-radius:5px;padding:8px 14px;background:var(--go);color:#fff;cursor:pointer;margin:0 8px 8px 0}
+  button.danger{background:var(--warn)}
+  button:focus-visible,input:focus-visible{outline:3px solid var(--go);outline-offset:2px}
+  .addr{font:15px ui-monospace,Consolas,monospace;padding:10px;border:1px dashed var(--line);border-radius:5px;word-break:break-all;user-select:all}
+  input{font:15px ui-monospace,Consolas,monospace;width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--line);border-radius:5px;background:transparent;color:var(--ink)}
+  #log{font:13px ui-monospace,Consolas,monospace;white-space:pre-wrap;color:var(--muted);min-height:3em}
+  .state{font-weight:600}
+</style>
+</head>
+<body>
+<main>
+  <h1>Script Shield test bench</h1>
+  <p class="lead">Each test mimics one part of the OPTIMJACK attack using harmless fake domains. Load the extension first, then run the tests and watch for the red banner.</p>
+
+  <section>
+    <h2>Third-party script injection</h2>
+    <p>Loads a pretend vendor script that injects two scripts from other domains. One is on the blocklist and should be blocked; the other should only trigger a warning.</p>
+    <button id="runVendor">Load tampered vendor script</button>
+  </section>
+
+  <section>
+    <h2>Inline payload fallback</h2>
+    <p>Some infected snippets carried a full copy of the payload that runs through <code>eval</code> when the attacker’s domain is blocked. This test runs a harmless stand-in that sets the same global marker.</p>
+    <button id="runInline">Run inline payload stand-in</button>
+  </section>
+
+  <section>
+    <h2>Wallet address swap on copy</h2>
+    <p>Turn on the fake clipper, select the address below, press Ctrl+C (Cmd+C on Mac), then paste into the box. Without the extension, you would get the attacker’s address.</p>
+    <button class="danger" id="clipCopy">Turn on clipper: swap during copy</button>
+    <button class="danger" id="clipLate">Turn on clipper: swap after copy</button>
+    <p>Clipper: <span class="state" id="clipState">off</span></p>
+    <div class="addr" id="myAddr">0x52908400098527886E0F7030069857D2E4169EE7</div>
+    <p style="margin-top:12px">Paste here:</p>
+    <input id="pasteBox" placeholder="Paste the address">
+  </section>
+
+  <section>
+    <h2>Test log</h2>
+    <div id="log"></div>
+  </section>
+</main>
+
+<script>
+  var ATTACKER = "0xdead00000000000000000000000000000000beef";
+  var logEl = document.getElementById("log");
+  window.shieldTestLog = function (m) { logEl.textContent = new Date().toLocaleTimeString() + "  " + m + "\n" + logEl.textContent; };
+
+  document.getElementById("runVendor").onclick = function () {
+    var s = document.createElement("script");
+    s.src = "vendor.js?" + Date.now();
+    document.head.appendChild(s);
+    shieldTestLog("Loaded vendor.js");
+  };
+
+  document.getElementById("runInline").onclick = function () {
+    try {
+      eval("window._k7 = 1; shieldTestLog('Inline payload stand-in RAN (not blocked)');");
+    } catch (err) {
+      shieldTestLog("Inline payload stand-in was stopped: " + err.message);
+    }
+  };
+
+  var mode = null;
+  function setMode(m) { mode = m; document.getElementById("clipState").textContent = m || "off"; shieldTestLog("Clipper mode: " + (m || "off")); }
+
+  // Mode 1: rewrite clipboard inside the copy event (what the extension's setData hook catches).
+  // Mode 2: let the copy finish, then overwrite the clipboard a moment later (caught by the paste check).
+  document.addEventListener("copy", function (e) {
+    if (mode === "during copy") {
+      e.clipboardData.setData("text/plain", ATTACKER);
+      e.preventDefault();
+    } else if (mode === "after copy") {
+      setTimeout(function () {
+        navigator.clipboard.writeText(ATTACKER).catch(function (err) { shieldTestLog("Late swap failed: " + err.message); });
+      }, 100);
+    }
+  });
+  document.getElementById("clipCopy").onclick = function () { setMode("during copy"); };
+  document.getElementById("clipLate").onclick = function () { setMode("after copy"); };
+
+  document.getElementById("pasteBox").addEventListener("input", function (e) {
+    var v = e.target.value.trim();
+    if (v === ATTACKER) shieldTestLog("Pasted the ATTACKER address. The swap worked.");
+    else if (v === document.getElementById("myAddr").textContent) shieldTestLog("Pasted your real address. You are safe.");
+  });
+</script>
+</body>
+</html>
